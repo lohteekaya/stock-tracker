@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outlet performance</title>
+<style>
+  :root{
+    --bg:#f4f3f0; --card:#ffffff; --line:#e4e2dc; --grid:#ececE7;
+    --ink:#23262b; --ink2:#5d636b; --muted:#8b9097;
+    --bar:#9aa7ad;            /* muted slate: on/above threshold */
+    --bad:#c4402f;            /* below 90% */
+    --accent:#e8742a;         /* the one orange accent */
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 48px}
+  header{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+  h1{margin:0;font-size:22px;font-weight:650;letter-spacing:-.01em}
+  h1::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:10px;vertical-align:middle}
+  .sub{color:var(--muted);margin-top:2px;font-size:13px}
+  .filters{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);padding:4px;border-radius:999px}
+  .filters button{border:0;background:none;padding:6px 14px;border-radius:999px;font:inherit;color:var(--ink2);cursor:pointer}
+  .filters button:hover{color:var(--ink)}
+  .filters button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+  .filters button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+  .kpi .label{color:var(--ink2);font-size:12.5px}
+  .kpi .value{font-size:28px;font-weight:650;letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums}
+  .kpi .note{color:var(--muted);font-size:12px;margin-top:2px}
+  .grid2{display:grid;grid-template-columns:1.65fr 1fr;gap:14px}
+  h2{margin:0 0 2px;font-size:15px;font-weight:620}
+  .card .hint{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  /* chart */
+  .chart{position:relative;height:260px;margin-left:36px;border-bottom:1px solid var(--line)}
+  .gl{position:absolute;left:0;right:0;border-top:1px solid var(--grid)}
+  .gl span{position:absolute;left:-36px;top:-8px;width:30px;text-align:right;font-size:11px;color:var(--muted)}
+  .gl.t100{border-top:1px solid #b9bcc1}
+  .gl.t90{border-top:1px dashed var(--bad);opacity:.55}
+  .cols{position:absolute;inset:0;display:flex;gap:10px;align-items:flex-end;padding:0 6px}
+  .col{flex:1;height:100%;display:flex;align-items:flex-end;justify-content:center;position:relative;outline:none}
+  .bar{width:min(100%,38px);background:var(--bar);border-radius:4px 4px 0 0;position:relative;transition:filter .12s}
+  .bar.bad{background:var(--bad)}
+  .col:hover .bar,.col:focus-visible .bar{filter:brightness(.88)}
+  .pct{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--h) + 4px);font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .xlabels{display:flex;gap:10px;margin-left:36px;padding:6px 6px 0}
+  .xl{flex:1;text-align:center;font-size:11px;color:var(--ink2);line-height:1.3}
+  .xl b{display:block;font-weight:600;color:var(--ink)}
+  .legend{display:flex;gap:16px;margin-top:14px;font-size:12px;color:var(--ink2);flex-wrap:wrap}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .tip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;opacity:0;transition:opacity .08s;z-index:10;white-space:nowrap}
+  .tip b{font-weight:600}
+  /* attention list */
+  ul.att{list-style:none;margin:0;padding:0}
+  ul.att li{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-top:1px solid var(--line)}
+  ul.att li:first-child{border-top:0;padding-top:2px}
+  .att .who{font-weight:600}
+  .att .when,.att .gap{color:var(--muted);font-size:12px}
+  .att .r{text-align:right}
+  .att .p{color:var(--bad);font-weight:650;font-variant-numeric:tabular-nums}
+  .att .p::before{content:"▼ ";font-size:10px}
+  .empty{color:var(--muted);padding:8px 0}
+  .empty::before{content:"✓ ";color:var(--ink2)}
+  details{margin-top:14px;font-size:12.5px;color:var(--ink2)}
+  summary{cursor:pointer}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:5px 8px;border-top:1px solid var(--line)}
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+  th{color:var(--muted);font-weight:500}
+  [hidden]{display:none!important}
+  /* auth */
+  .login{max-width:360px;margin:12vh auto 0}
+  .login h1{margin-bottom:4px}
+  .login form{display:grid;gap:12px;margin-top:18px}
+  .login label{display:grid;gap:5px;font-size:12.5px;color:var(--ink2)}
+  .login input{font:inherit;color:var(--ink);padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .login input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+  .btn{font:inherit;border:0;border-radius:8px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:default}
+  .btn.ghost{background:none;color:var(--ink2);border:1px solid var(--line);padding:7px 12px;font-weight:500}
+  .btn.ghost:hover{color:var(--ink);border-color:#c9c7c0}
+  .err{color:var(--bad);font-size:12.5px;min-height:1.2em}
+  .right{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .who-chip{color:var(--ink2);font-size:13px}
+  @media(max-width:820px){.kpis{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="login card" id="login" hidden>
+    <h1>Outlet performance</h1>
+    <div class="sub">Sign in to view the dashboard</div>
+    <form id="loginForm">
+      <label>Username
+        <input id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label>Password
+        <input id="password" type="password" autocomplete="current-password" required>
+      </label>
+      <div class="err" id="loginErr" role="alert"></div>
+      <button class="btn" id="loginBtn" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+  <header>
+    <div>
+      <h1>Outlet performance</h1>
+      <div class="sub" id="range">Weekly sales vs target</div>
+    </div>
+    <div class="right">
+      <div class="filters" id="filters" role="group" aria-label="Filter by outlet"></div>
+      <span class="who-chip" id="whoami"></span>
+      <button class="btn ghost" id="signOut" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Sales as % of target</h2>
+      <div class="hint">One bar per outlet-week. Red = below 90% of target.</div>
+      <div class="chart" id="chart"></div>
+      <div class="xlabels" id="xlabels"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--bar)"></i>90% of target or above</span>
+        <span><i class="sw" style="background:var(--bad)"></i>Below 90%</span>
+        <span><i class="sw" style="background:none;border-top:1px dashed var(--bad);height:0;width:14px;vertical-align:3px"></i>90% line</span>
+      </div>
+      <details>
+        <summary>View as table</summary>
+        <table id="table"></table>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Needs attention</h2>
+      <div class="hint">Outlet-weeks under 90% of target, worst first.</div>
+      <ul class="att" id="att"></ul>
+    </div>
+  </section>
+  </div><!-- /#app -->
+</div>
+<div class="tip" id="tip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ============================================================
+   DATA LOADING — the only place data enters the dashboard.
+   Live data from Supabase table public.outlet_weeks (read-only via
+   the publishable key + a SELECT-only RLS policy).
+   Returns an array of
+   { outlet, week:'YYYY-MM-DD', sales, target, orders, returns }.
+   ============================================================ */
+const SUPABASE_URL = "https://dxgkqzbqvfcrcfrcqefb.supabase.co";
+const SUPABASE_KEY = "sb_publishable_flFmqw9qVHIZbL7n7JkIxA_6NOdb9zw";
+const EMAIL_DOMAIN = "outlet-dashboard.example"; // username "priya" signs in as priya@<this domain>
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function loadData() {
+  const { data, error } = await sb.from("outlet_weeks")
+    .select("outlet,week,sales,target,orders,returns")
+    .order("week", { ascending: true });
+  if (error) throw error;
+  return data.map(r => ({
+    outlet: r.outlet, week: r.week,
+    sales: Number(r.sales), target: Number(r.target),
+    orders: Number(r.orders), returns: Number(r.returns),
+  }));
+}
+
+/* ---------------- app ---------------- */
+const THRESHOLD = 0.9;
+let OUTLETS = ["All"]; // filled from the data, so new outlets appear automatically
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString("en-SG");
+const money = n => "S$" + fmt(Math.round(n));
+const pct = (n, d = 1) => (n * 100).toFixed(d) + "%";
+const dateLbl = w => new Date(w + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+let ALL = [], selected = "All";
+
+function renderFilters() {
+  $("filters").innerHTML = OUTLETS.map(o =>
+    `<button type="button" data-o="${o}" aria-pressed="${o === selected}">${o}</button>`).join("");
+}
+$("filters").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  selected = b.dataset.o; renderFilters(); render();
+});
+
+function render() {
+  const rows = ALL.filter(r => selected === "All" || r.outlet === selected);
+  const sum = k => rows.reduce((a, r) => a + r[k], 0);
+  const sales = sum("sales"), target = sum("target"), orders = sum("orders"), returns = sum("returns");
+  const weeks = [...new Set(rows.map(r => r.week))].sort();
+  $("range").textContent = (selected === "All" ? "All outlets" : selected) +
+    (weeks.length ? " · weeks of " + dateLbl(weeks[0]) + " – " + dateLbl(weeks[weeks.length - 1]) : "");
+
+  const kpis = [
+    ["Total sales", money(sales), "Target " + money(target)],
+    ["% of target", pct(target ? sales / target : 0), sales >= target ? "Above target" : money(target - sales) + " short"],
+    ["Orders", fmt(orders), "Avg order " + money(orders ? sales / orders : 0)],
+    ["Returns", pct(orders ? returns / orders : 0), fmt(returns) + " returns / " + fmt(orders) + " orders"],
+  ];
+  $("kpis").innerHTML = kpis.map(([l, v, n]) =>
+    `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${n}</div></div>`).join("");
+
+  // bar chart
+  const MAX = 1.1, ticks = [0, .25, .5, .75, 1];
+  const ordered = [...rows].sort((a, b) => OUTLETS.indexOf(a.outlet) - OUTLETS.indexOf(b.outlet) || a.week.localeCompare(b.week));
+  const grid = ticks.map(t => `<div class="gl ${t === 1 ? "t100" : ""}" style="bottom:${t / MAX * 100}%"><span>${t * 100}%</span></div>`).join("")
+    + `<div class="gl t90" style="bottom:${THRESHOLD / MAX * 100}%"></div>`;
+  const cols = ordered.map((r, i) => {
+    const p = r.sales / r.target, h = p / MAX * 100, bad = p < THRESHOLD;
+    return `<div class="col" tabindex="0" data-i="${i}" aria-label="${r.outlet} ${dateLbl(r.week)}: ${pct(p)} of target${bad ? ", below 90%" : ""}">
+      <div class="bar ${bad ? "bad" : ""}" style="height:${h}%"></div>
+      <div class="pct" style="--h:${h * 2.6}px;${bad ? "color:var(--bad);font-weight:600" : ""}">${pct(p, 0)}</div>
+    </div>`;
+  }).join("");
+  $("chart").innerHTML = grid + `<div class="cols">${cols}</div>`;
+  $("xlabels").innerHTML = ordered.map(r => `<div class="xl"><b>${r.outlet}</b>${dateLbl(r.week)}</div>`).join("");
+
+  const tip = $("tip");
+  $("chart").querySelectorAll(".col").forEach(c => {
+    const r = ordered[c.dataset.i];
+    const show = e => {
+      const p = r.sales / r.target;
+      tip.innerHTML = `<b>${r.outlet} · ${dateLbl(r.week)}</b><br>${pct(p)} of target<br>${money(r.sales)} of ${money(r.target)}<br>${fmt(r.orders)} orders · ${r.returns} returns`;
+      const box = c.getBoundingClientRect();
+      const x = e.clientX ?? box.left + box.width / 2, y = e.clientY ?? box.top;
+      tip.style.left = Math.min(x + 14, innerWidth - 190) + "px";
+      tip.style.top = Math.max(y - 90, 8) + "px";
+      tip.style.opacity = 1;
+    };
+    c.addEventListener("mousemove", show); c.addEventListener("focus", show);
+    c.addEventListener("mouseleave", () => tip.style.opacity = 0);
+    c.addEventListener("blur", () => tip.style.opacity = 0);
+  });
+
+  // table view
+  $("table").innerHTML = `<tr><th>Outlet</th><th>Week</th><th>Sales</th><th>Target</th><th>% target</th></tr>` +
+    ordered.map(r => `<tr><td>${r.outlet}</td><td>${dateLbl(r.week)}</td><td>${fmt(r.sales)}</td><td>${fmt(r.target)}</td><td>${pct(r.sales / r.target)}</td></tr>`).join("");
+
+  // needs attention
+  const low = rows.filter(r => r.sales / r.target < THRESHOLD)
+    .sort((a, b) => a.sales / a.target - b.sales / b.target);
+  $("att").innerHTML = low.length ? low.map(r => `
+    <li><div><div class="who">${r.outlet}</div><div class="when">Week of ${dateLbl(r.week)}</div></div>
+    <div class="r"><div class="p">${pct(r.sales / r.target)}</div><div class="gap">${money(r.target - r.sales)} short</div></div></li>`).join("")
+    : `<li class="empty">Nothing under 90% of target.</li>`;
+}
+
+/* ---------------- auth ---------------- */
+let currentUserId = null;
+
+function showLogin() {
+  currentUserId = null; ALL = [];
+  $("app").hidden = true; $("login").hidden = false;
+  $("password").value = ""; $("loginBtn").disabled = false; $("loginBtn").textContent = "Sign in";
+}
+
+async function showApp(user) {
+  if (currentUserId === user.id) return;          // ignore repeat SIGNED_IN events
+  currentUserId = user.id;
+  $("login").hidden = true; $("app").hidden = false;
+  $("whoami").textContent = user.email.split("@")[0];
+  try {
+    const { data: p } = await sb.from("profiles").select("display_name").maybeSingle();
+    if (p && p.display_name) $("whoami").textContent = p.display_name;
+    ALL = await loadData();
+    selected = "All";
+    OUTLETS = ["All", ...[...new Set(ALL.map(r => r.outlet))].sort()];
+    renderFilters(); render();
+  } catch (err) {
+    $("kpis").innerHTML = `<div class="card" style="grid-column:1/-1"><span class="err">Could not load data: ${err.message}</span></div>`;
+  }
+}
+
+$("loginForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  $("loginBtn").disabled = true; $("loginBtn").textContent = "Signing in…";
+  const u = $("username").value.trim().toLowerCase();
+  const email = u.includes("@") ? u : `${u}@${EMAIL_DOMAIN}`;
+  const { error } = await sb.auth.signInWithPassword({ email, password: $("password").value });
+  if (error) {
+    $("loginErr").textContent = error.message === "Invalid login credentials"
+      ? "Wrong username or password." : error.message;
+    $("loginBtn").disabled = false; $("loginBtn").textContent = "Sign in";
+  }
+  // success is handled by onAuthStateChange below
+});
+
+$("signOut").addEventListener("click", () => sb.auth.signOut());
+
+// Don't await Supabase calls inside this callback; defer them.
+sb.auth.onAuthStateChange((event, session) => {
+  if (session) setTimeout(() => showApp(session.user), 0);
+  else if (event === "SIGNED_OUT" || event === "INITIAL_SESSION") setTimeout(showLogin, 0);
+});
+</script>
+</body>
+</html>
